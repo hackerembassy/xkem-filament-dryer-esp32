@@ -6,6 +6,7 @@
 #include "sensors.h"
 #include "relay.h"
 #include "lid.h"
+#include "datalog.h"
 #include "webserver.h"
 
 static WebServer server(80);
@@ -69,6 +70,17 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
   </div>
 </div>
 <button class="btn btn-toggle" id="tb" onclick="toggle()">Loading...</button>
+<div class="card" style="margin-top:16px">
+  <h2>Data Log</h2>
+  <div class="row"><span>Records</span><span id="lr">--</span></div>
+  <div class="row"><span>File size</span><span id="lf">--</span></div>
+  <div class="row"><span>Disk free</span><span id="ld">--</span></div>
+  <div class="row"><span>Logging</span><span id="la">--</span></div>
+  <div class="ctrl" style="margin-top:8px">
+    <a class="btn btn-set" href="/api/log" download="dryer_log.csv">Download CSV</a>
+    <button class="btn btn-set" onclick="clearLog()" style="background:#4a1a1a;color:#f44">Clear</button>
+  </div>
+</div>
 <div class="status">Auto-refresh: 60s | <span id="lu">--</span></div>
 <script>
 function fmt(v,u){return v===null?'--':v.toFixed(1)+u}
@@ -101,7 +113,21 @@ function setPoint(){
 function toggle(){
   fetch('/api/toggle',{method:'POST'}).then(()=>refresh());
 }
-refresh();setInterval(refresh,60000);
+function fmtBytes(b){if(b<1024)return b+'B';return(b/1024).toFixed(1)+'KB'}
+function logStats(){
+  fetch('/api/log/stats').then(r=>r.json()).then(function(d){
+    document.getElementById('lr').textContent=d.record_count;
+    document.getElementById('lf').textContent=fmtBytes(d.file_size);
+    document.getElementById('ld').textContent=fmtBytes(d.disk_free);
+    document.getElementById('la').textContent=d.logging_active?'Active':'Stopped';
+    document.getElementById('la').style.color=d.logging_active?'#0f0':'#f44';
+  }).catch(function(){});
+}
+function clearLog(){
+  if(!confirm('Clear all log data?'))return;
+  fetch('/api/log',{method:'DELETE'}).then(()=>logStats());
+}
+refresh();logStats();setInterval(refresh,60000);setInterval(logStats,60000);
 </script>
 </body>
 </html>
@@ -201,6 +227,7 @@ void webserver_init(void) {
         server.on("/api/status", HTTP_GET, handleStatus);
         server.on("/api/setpoint", HTTP_POST, handleSetpoint);
         server.on("/api/toggle", HTTP_POST, handleToggle);
+        datalog_registerEndpoints(server);
         server.begin();
         Serial.println("HTTP server started");
     } else {

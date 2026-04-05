@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <WebServer.h>
 #include <time.h>
 #include "datalog.h"
 

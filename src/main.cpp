@@ -8,6 +8,7 @@
 #include "display.h"
 #include "webserver.h"
 #include "lid.h"
+#include "datalog.h"
 
 static unsigned long lastSensorRead = 0;
 static int heatsinkFailCount = 0;
@@ -38,6 +39,9 @@ void setup() {
 
     // WiFi connect (may block up to 10s, shows IP on LCD when connected)
     webserver_init();
+
+    // Data logging (LittleFS + NTP, must be after WiFi for NTP sync)
+    datalog_init();
 
     // Show IP on LCD if connected
     if (WiFi.status() == WL_CONNECTED) {
@@ -102,6 +106,13 @@ void loop() {
             relay_update(chamberTemp, chamberValid, heatsinkTemp, heatsinkValid, lidOpen);
         }
 
+        // Data logging (buffered, flushed to flash periodically)
+        datalog_record(chamberTemp, humidity, heatsinkTemp,
+                       chamberValid, heatsinkValid,
+                       relay_isOn(), lidOpen,
+                       relay_getSetpoint(), relay_isEnabled(),
+                       relay_isOvertemp());
+
         // Serial logging
         Serial.printf("Chamber: %.1fC (%s) | Humidity: %.1f%% | Heatsink: %.1fC (%s) | "
                        "Relay: %s | Setpoint: %.1fC | Enabled: %s | Lid: %s\n",
@@ -125,4 +136,7 @@ void loop() {
         relay_isOvertemp(),
         lid_isOpen()
     );
+
+    // Flush data log buffer to flash periodically
+    datalog_flush();
 }

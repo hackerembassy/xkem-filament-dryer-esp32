@@ -1,7 +1,7 @@
 #ifndef DATALOG_H
 #define DATALOG_H
 
-#include <WebServer.h>
+class WebServer;
 
 void datalog_init(void);
 void datalog_record(float chamberTemp, float humidity, float heatsinkTemp,
