@@ -7,6 +7,7 @@
 #include "sensors.h"
 #include "display.h"
 #include "webserver.h"
+#include "lid.h"
 
 static unsigned long lastSensorRead = 0;
 static int heatsinkFailCount = 0;
@@ -32,6 +33,7 @@ void setup() {
     Wire1.setTimeOut(50);
 
     sensors_init();
+    lid_init();
     display_init();
 
     // WiFi connect (may block up to 10s, shows IP on LCD when connected)
@@ -67,12 +69,14 @@ void loop() {
         lastSensorRead = now;
 
         sensors_read();
+        lid_read();
 
         float chamberTemp  = sensors_getChamberTemp();
         float humidity     = sensors_getHumidity();
         float heatsinkTemp = sensors_getHeatsinkTemp();
         bool  chamberValid = sensors_isChamberValid();
         bool  heatsinkValid = sensors_isHeatsinkValid();
+        bool  lidOpen       = lid_isOpen();
 
         // Track consecutive sensor failures
         if (!heatsinkValid) {
@@ -95,18 +99,19 @@ void loop() {
             relay_forceOff();
             Serial.println("SAFETY: Chamber sensor failure limit reached, relay forced OFF");
         } else {
-            relay_update(chamberTemp, chamberValid, heatsinkTemp, heatsinkValid);
+            relay_update(chamberTemp, chamberValid, heatsinkTemp, heatsinkValid, lidOpen);
         }
 
         // Serial logging
         Serial.printf("Chamber: %.1fC (%s) | Humidity: %.1f%% | Heatsink: %.1fC (%s) | "
-                       "Relay: %s | Setpoint: %.1fC | Enabled: %s\n",
+                       "Relay: %s | Setpoint: %.1fC | Enabled: %s | Lid: %s\n",
                        chamberTemp, chamberValid ? "ok" : "ERR",
                        humidity,
                        heatsinkTemp, heatsinkValid ? "ok" : "ERR",
                        relay_isOn() ? "ON" : "OFF",
                        relay_getSetpoint(),
-                       relay_isEnabled() ? "yes" : "no");
+                       relay_isEnabled() ? "yes" : "no",
+                       lidOpen ? "OPEN" : "closed");
     }
 
     // Display update (static 2-line layout, no cycling)
@@ -117,6 +122,7 @@ void loop() {
         sensors_isChamberValid(),
         sensors_isHeatsinkValid(),
         relay_isOn(),
-        relay_isOvertemp()
+        relay_isOvertemp(),
+        lid_isOpen()
     );
 }

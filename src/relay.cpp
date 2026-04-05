@@ -15,7 +15,15 @@ void relay_init(void) {
 }
 
 void relay_update(float chamberTemp, bool chamberValid,
-                  float heatsinkTemp, bool heatsinkValid) {
+                  float heatsinkTemp, bool heatsinkValid,
+                  bool lidOpen) {
+    // Priority 0: lid open — immediate safety shutoff
+    if (lidOpen) {
+        digitalWrite(PIN_RELAY, LOW);
+        relayOn = false;
+        return;
+    }
+
     // Dryer disabled by user — relay stays off
     if (!enabled) {
         digitalWrite(PIN_RELAY, LOW);

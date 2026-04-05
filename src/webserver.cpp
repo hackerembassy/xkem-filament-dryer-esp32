@@ -5,6 +5,7 @@
 #include "secrets.h"
 #include "sensors.h"
 #include "relay.h"
+#include "lid.h"
 #include "webserver.h"
 
 static WebServer server(80);
@@ -49,6 +50,8 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
 <body>
 <h1>Filament Dryer</h1>
 <div id="ot" class="ot" style="display:none">HEATSINK OVERTEMP</div>
+<div id="lid" class="card"><h2>Lid</h2>
+  <span class="val" id="ls">--</span></div>
 <div class="card"><h2>Chamber Temperature</h2>
   <span class="val" id="ct">--</span></div>
 <div class="card"><h2>Humidity</h2>
@@ -80,6 +83,9 @@ function update(d){
   document.getElementById('rs').className=d.relay_on?'relay-on':'relay-off';
   document.getElementById('sp').textContent=fmt(d.setpoint,'\u00B0C');
   document.getElementById('ot').style.display=d.overtemp?'block':'none';
+  var ls=document.getElementById('ls');
+  ls.textContent=d.lid_open?'OPEN':'CLOSED';
+  ls.style.color=d.lid_open?'#f44':'#0f0';
   var tb=document.getElementById('tb');
   tb.textContent=d.enabled?'Stop Dryer':'Start Dryer';
   tb.className='btn btn-toggle'+(d.enabled?'':' off');
@@ -106,7 +112,7 @@ static void handleRoot(void) {
 }
 
 static void handleStatus(void) {
-    char json[256];
+    char json[320];
     char ct[8], hu[8], ht[8], sp[8];
 
     // Format floats manually to avoid %f on ESP32
@@ -118,14 +124,16 @@ static void handleStatus(void) {
     snprintf(json, sizeof(json),
         "{\"chamber_temp\":%s,\"humidity\":%s,\"heatsink_temp\":%s,"
         "\"chamber_valid\":%s,\"heatsink_valid\":%s,"
-        "\"relay_on\":%s,\"overtemp\":%s,\"setpoint\":%s,\"enabled\":%s}",
+        "\"relay_on\":%s,\"overtemp\":%s,\"setpoint\":%s,\"enabled\":%s,"
+        "\"lid_open\":%s}",
         ct, hu, ht,
         sensors_isChamberValid() ? "true" : "false",
         sensors_isHeatsinkValid() ? "true" : "false",
         relay_isOn() ? "true" : "false",
         relay_isOvertemp() ? "true" : "false",
         sp,
-        relay_isEnabled() ? "true" : "false");
+        relay_isEnabled() ? "true" : "false",
+        lid_isOpen() ? "true" : "false");
 
     server.send(200, "application/json", json);
 }

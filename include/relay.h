@@ -3,7 +3,8 @@
 
 void  relay_init(void);
 void  relay_update(float chamberTemp, bool chamberValid,
-                   float heatsinkTemp, bool heatsinkValid);
+                   float heatsinkTemp, bool heatsinkValid,
+                   bool lidOpen);
 void  relay_forceOff(void);
 void  relay_setSetpoint(float tempC);
 float relay_getSetpoint(void);
