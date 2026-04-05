@@ -8,7 +8,7 @@
 #define PIN_HTU_SDA     19
 #define PIN_HTU_SCL     18
 #define PIN_NTC         33
-#define PIN_LID_SWITCH  4
+#define PIN_LID_SWITCH  27
 
 // --- LCD ---
 #define LCD_ADDRESS     0x27
