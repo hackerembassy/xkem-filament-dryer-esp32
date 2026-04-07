@@ -46,7 +46,11 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
 .btn-toggle.off{background:#4a1a1a;color:#f44}
 .btn:active{opacity:0.7}
 .status{text-align:center;color:#666;font-size:0.8em;margin-top:15px}
+.chart-wrap{background:#16213e;border:1px solid #0f3460;border-radius:8px;
+  padding:12px;margin-top:12px}
+.chart-wrap h2{font-size:1em;color:#888;margin-bottom:8px}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 <h1>Filament Dryer</h1>
@@ -70,6 +74,10 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
   </div>
 </div>
 <button class="btn btn-toggle" id="tb" onclick="toggle()">Loading...</button>
+<div class="chart-wrap"><h2>Temperature</h2>
+  <canvas id="tempChart" height="150"></canvas></div>
+<div class="chart-wrap"><h2>Humidity &amp; Relay</h2>
+  <canvas id="envChart" height="150"></canvas></div>
 <div class="card" style="margin-top:16px">
   <h2>Data Log</h2>
   <div class="row"><span>Records</span><span id="lr">--</span></div>
@@ -81,9 +89,43 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
     <button class="btn btn-set" onclick="clearLog()" style="background:#4a1a1a;color:#f44">Clear</button>
   </div>
 </div>
-<div class="status">Auto-refresh: 60s | <span id="lu">--</span></div>
+<div class="status">Auto-refresh: 10s | <span id="lu">--</span></div>
 <script>
 function fmt(v,u){return v===null?'--':v.toFixed(1)+u}
+var chartLabels=[],chamberData=[],heatsinkData=[],humidityData=[],relayData=[];
+var MAX_PTS=360,tempChart,envChart;
+function initCharts(){
+  Chart.defaults.color='#888';Chart.defaults.borderColor='#333';
+  tempChart=new Chart(document.getElementById('tempChart'),{type:'line',
+    data:{labels:chartLabels,datasets:[
+      {label:'Chamber',data:chamberData,borderColor:'#0ff',backgroundColor:'rgba(0,255,255,0.1)',tension:0.3,pointRadius:0,borderWidth:1.5},
+      {label:'Heatsink',data:heatsinkData,borderColor:'#f44',backgroundColor:'rgba(255,68,68,0.1)',tension:0.3,pointRadius:0,borderWidth:1.5}
+    ]},options:{responsive:true,animation:false,
+      plugins:{legend:{position:'top',labels:{boxWidth:12}}},
+      scales:{x:{ticks:{maxTicksLimit:6,maxRotation:0}},
+        y:{title:{display:true,text:'\u00B0C'}}}}});
+  envChart=new Chart(document.getElementById('envChart'),{type:'line',
+    data:{labels:chartLabels,datasets:[
+      {label:'Humidity',data:humidityData,borderColor:'#0f0',backgroundColor:'rgba(0,255,0,0.1)',tension:0.3,pointRadius:0,borderWidth:1.5,yAxisID:'y'},
+      {label:'Relay',data:relayData,borderColor:'#ff0',backgroundColor:'rgba(255,255,0,0.05)',stepped:true,pointRadius:0,borderWidth:1.5,yAxisID:'y1'}
+    ]},options:{responsive:true,animation:false,
+      plugins:{legend:{position:'top',labels:{boxWidth:12}}},
+      scales:{x:{ticks:{maxTicksLimit:6,maxRotation:0}},
+        y:{title:{display:true,text:'%'},position:'left'},
+        y1:{title:{display:true,text:'Relay'},position:'right',min:-0.1,max:1.1,
+          ticks:{stepSize:1,callback:function(v){return v===0?'OFF':v===1?'ON':''}},
+          grid:{drawOnChartArea:false}}}}});
+}
+function pushChart(d){
+  var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')+':'+String(t.getSeconds()).padStart(2,'0');
+  chartLabels.push(ts);
+  chamberData.push(d.chamber_valid?d.chamber_temp:null);
+  heatsinkData.push(d.heatsink_valid?d.heatsink_temp:null);
+  humidityData.push(d.chamber_valid?d.humidity:null);
+  relayData.push(d.relay_on?1:0);
+  while(chartLabels.length>MAX_PTS){chartLabels.shift();chamberData.shift();heatsinkData.shift();humidityData.shift();relayData.shift();}
+  tempChart.update();envChart.update();
+}
 function update(d){
   document.getElementById('ct').textContent=d.chamber_valid?fmt(d.chamber_temp,'\u00B0C'):'ERROR';
   document.getElementById('ct').className='val'+(d.chamber_valid?'':' err');
@@ -102,6 +144,7 @@ function update(d){
   tb.textContent=d.enabled?'Stop Dryer':'Start Dryer';
   tb.className='btn btn-toggle'+(d.enabled?'':' off');
   document.getElementById('lu').textContent=new Date().toLocaleTimeString();
+  if(tempChart)pushChart(d);
 }
 function refresh(){fetch('/api/status').then(r=>r.json()).then(update).catch(()=>{})}
 function setPoint(){
@@ -127,7 +170,7 @@ function clearLog(){
   if(!confirm('Clear all log data?'))return;
   fetch('/api/log',{method:'DELETE'}).then(()=>logStats());
 }
-refresh();logStats();setInterval(refresh,60000);setInterval(logStats,60000);
+initCharts();refresh();logStats();setInterval(refresh,10000);setInterval(logStats,60000);
 </script>
 </body>
 </html>
