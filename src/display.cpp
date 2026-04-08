@@ -4,7 +4,7 @@
 #include "config.h"
 #include "display.h"
 
-static LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS, Wire1);
+static LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS, Wire);
 
 void display_init(void) {
     lcd.init();

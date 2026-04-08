@@ -28,10 +28,7 @@ void setup() {
     Wire.setClock(50000);
     Wire.setTimeOut(50);
 
-    // I2C1 (Wire1): LCD — uses patched library with TwoWire& parameter
-    Wire1.begin(PIN_LCD_SDA, PIN_LCD_SCL);
-    Wire1.setClock(50000);
-    Wire1.setTimeOut(50);
+    // LCD shares I2C0 (Wire) with HTU21D — different addresses (0x27 vs 0x40)
 
     sensors_init();
     lid_init();
@@ -49,12 +46,14 @@ void setup() {
     }
 
     // Watchdog: reset ESP if loop hangs for >15s (after WiFi is done)
+    // Arduino ESP32 core 3.x already initializes TWDT at boot,
+    // so use reconfigure() to change the timeout instead of init()
     esp_task_wdt_config_t wdtConfig = {
         .timeout_ms = 15000,
         .idle_core_mask = 0,
         .trigger_panic = true
     };
-    esp_task_wdt_init(&wdtConfig);
+    esp_task_wdt_reconfigure(&wdtConfig);
     esp_task_wdt_add(NULL);
 
     Serial.println("Filament dryer ready");
@@ -123,19 +122,12 @@ void loop() {
                        relay_getSetpoint(),
                        relay_isEnabled() ? "yes" : "no",
                        lidOpen ? "OPEN" : "closed");
-    }
 
-    // Display update (static 2-line layout, no cycling)
-    display_update(
-        sensors_getChamberTemp(),
-        sensors_getHumidity(),
-        sensors_getHeatsinkTemp(),
-        sensors_isChamberValid(),
-        sensors_isHeatsinkValid(),
-        relay_isOn(),
-        relay_isOvertemp(),
-        lid_isOpen()
-    );
+        // Display update (same interval as sensor reads to avoid hammering I2C)
+        display_update(chamberTemp, humidity, heatsinkTemp,
+                       chamberValid, heatsinkValid,
+                       relay_isOn(), relay_isOvertemp(), lidOpen);
+    }
 
     // Flush data log buffer to flash periodically
     datalog_flush();
