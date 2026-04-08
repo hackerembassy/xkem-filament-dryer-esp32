@@ -23,7 +23,7 @@ static float readNTC(void) {
 
     float Vout = mv / 1000.0f;
     if (Vout >= (NTC_VCC - 0.01f)) return NTC_TEMP_MAX + 1.0f;  // short circuit protection
-    if (Vout <= 0.01f) return NTC_TEMP_MIN - 1.0f;              // open circuit protection
+    if (Vout <= NTC_VOUT_SHORT_FLOOR) return NTC_TEMP_MAX + 1.0f; // short circuit / ADC dead zone
 
     // Divider: VCC → R_fixed → ADC → R_ntc → GND
     float R_ntc = NTC_FIXED_RESISTOR * Vout / (NTC_VCC - Vout);
