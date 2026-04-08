@@ -4,7 +4,8 @@
 void display_init(void);
 void display_update(float chamberTemp, float humidity, float heatsinkTemp,
                     bool chamberValid, bool heatsinkValid,
-                    bool relayOn, bool overtemp);
+                    bool relayOn, bool overtemp, bool lidOpen,
+                    bool thermalFault, const char* modeLabel);
 void display_showIP(const char *ip);
 
 #endif

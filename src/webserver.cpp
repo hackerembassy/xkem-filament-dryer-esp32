@@ -5,6 +5,8 @@
 #include "secrets.h"
 #include "sensors.h"
 #include "relay.h"
+#include "lid.h"
+#include "datalog.h"
 #include "webserver.h"
 
 static WebServer server(80);
@@ -32,23 +34,31 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
 .relay-on{color:#0f0;font-weight:bold}
 .relay-off{color:#f44;font-weight:bold}
 .ot{color:#f44;font-size:1.2em;text-align:center;padding:10px;
-  background:#400;border:1px solid #f44;border-radius:8px;margin-bottom:12px}
-.ctrl{display:flex;gap:8px;align-items:center;margin-top:10px}
-.ctrl input{width:80px;padding:8px;background:#0a0a1a;color:#0ff;
-  border:1px solid #0f3460;border-radius:4px;font-family:inherit;font-size:1em}
+  background:#400;border:1px solid #f44;border-radius:8px;margin-bottom:12px;display:none}
 .btn{padding:8px 16px;border:none;border-radius:4px;cursor:pointer;
   font-family:inherit;font-size:0.9em;font-weight:bold}
 .btn-set{background:#0f3460;color:#0ff}
-.btn-toggle{background:#1a4a1a;color:#0f0;width:100%;padding:12px;
-  font-size:1.1em;margin-top:8px}
-.btn-toggle.off{background:#4a1a1a;color:#f44}
 .btn:active{opacity:0.7}
+.mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.mbtn{padding:12px 8px;border:none;border-radius:6px;cursor:pointer;
+  font-family:inherit;font-size:0.95em;font-weight:bold;
+  background:#0a0a1a;color:#888;border:1px solid #333;text-align:center}
+.mbtn.active{background:#0f3460;color:#0ff;border-color:#0ff}
+.mbtn:active{opacity:0.7}
 .status{text-align:center;color:#666;font-size:0.8em;margin-top:15px}
+.chart-wrap{background:#16213e;border:1px solid #0f3460;border-radius:8px;
+  padding:12px;margin-top:12px}
+.chart-wrap h2{font-size:1em;color:#888;margin-bottom:8px}
+.ctrl{display:flex;gap:8px;align-items:center;margin-top:10px}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 <h1>Filament Dryer</h1>
-<div id="ot" class="ot" style="display:none">HEATSINK OVERTEMP</div>
+<div id="ot" class="ot">HEATSINK OVERTEMP</div>
+<div id="tf" class="ot">THERMAL FAULT: Chamber not heating</div>
+<div id="lid" class="card"><h2>Lid</h2>
+  <span class="val" id="ls">--</span></div>
 <div class="card"><h2>Chamber Temperature</h2>
   <span class="val" id="ct">--</span></div>
 <div class="card"><h2>Humidity</h2>
@@ -60,15 +70,72 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
     <span id="rs" class="relay-off">--</span></div>
   <div class="row" style="margin-top:8px"><h2>Setpoint</h2>
     <span class="val" id="sp" style="font-size:1.2em">--</span></div>
-  <div class="ctrl">
-    <input type="number" id="si" min="30" max="60" step="0.5" placeholder="50">
-    <button class="btn btn-set" onclick="setPoint()">Set</button>
+</div>
+<div class="card">
+  <h2>Mode</h2>
+  <div class="mode-grid">
+    <button class="mbtn" id="m_off" onclick="setMode('off')">OFF</button>
+    <button class="mbtn" id="m_maintain" onclick="setMode('maintain')">MAINTAIN</button>
+    <button class="mbtn" id="m_pla" onclick="setMode('pla')">PLA 45&deg;C</button>
+    <button class="mbtn" id="m_petg" onclick="setMode('petg')">PETG 55&deg;C</button>
+    <button class="mbtn" id="m_abs" onclick="setMode('abs')">ABS 60&deg;C</button>
+    <button class="mbtn" id="m_tpu" onclick="setMode('tpu')">TPU 50&deg;C</button>
+    <button class="mbtn" id="m_mix" onclick="setMode('mix')">MIX 45&deg;C</button>
   </div>
 </div>
-<button class="btn btn-toggle" id="tb" onclick="toggle()">Loading...</button>
-<div class="status">Auto-refresh: 60s | <span id="lu">--</span></div>
+<div class="chart-wrap"><h2>Temperature</h2>
+  <canvas id="tempChart" height="150"></canvas></div>
+<div class="chart-wrap"><h2>Humidity &amp; Relay</h2>
+  <canvas id="envChart" height="150"></canvas></div>
+<div class="card" style="margin-top:16px">
+  <h2>Data Log</h2>
+  <div class="row"><span>Records</span><span id="lr">--</span></div>
+  <div class="row"><span>File size</span><span id="lf">--</span></div>
+  <div class="row"><span>Disk free</span><span id="ld">--</span></div>
+  <div class="row"><span>Logging</span><span id="la">--</span></div>
+  <div class="ctrl" style="margin-top:8px">
+    <a class="btn btn-set" href="/api/log" download="dryer_log.csv">Download CSV</a>
+    <button class="btn btn-set" onclick="clearLog()" style="background:#4a1a1a;color:#f44">Clear</button>
+  </div>
+</div>
+<div class="status">Auto-refresh: 10s | <span id="lu">--</span></div>
 <script>
 function fmt(v,u){return v===null?'--':v.toFixed(1)+u}
+var MODES=['off','maintain','pla','petg','abs','tpu','mix'];
+var chartLabels=[],chamberData=[],heatsinkData=[],humidityData=[],relayData=[];
+var MAX_PTS=360,tempChart,envChart;
+function initCharts(){
+  Chart.defaults.color='#888';Chart.defaults.borderColor='#333';
+  tempChart=new Chart(document.getElementById('tempChart'),{type:'line',
+    data:{labels:chartLabels,datasets:[
+      {label:'Chamber',data:chamberData,borderColor:'#0ff',backgroundColor:'rgba(0,255,255,0.1)',tension:0.3,pointRadius:0,borderWidth:1.5},
+      {label:'Heatsink',data:heatsinkData,borderColor:'#f44',backgroundColor:'rgba(255,68,68,0.1)',tension:0.3,pointRadius:0,borderWidth:1.5}
+    ]},options:{responsive:true,animation:false,
+      plugins:{legend:{position:'top',labels:{boxWidth:12}}},
+      scales:{x:{ticks:{maxTicksLimit:6,maxRotation:0}},
+        y:{title:{display:true,text:'\u00B0C'}}}}});
+  envChart=new Chart(document.getElementById('envChart'),{type:'line',
+    data:{labels:chartLabels,datasets:[
+      {label:'Humidity',data:humidityData,borderColor:'#0f0',backgroundColor:'rgba(0,255,0,0.1)',tension:0.3,pointRadius:0,borderWidth:1.5,yAxisID:'y'},
+      {label:'Relay',data:relayData,borderColor:'#ff0',backgroundColor:'rgba(255,255,0,0.05)',stepped:true,pointRadius:0,borderWidth:1.5,yAxisID:'y1'}
+    ]},options:{responsive:true,animation:false,
+      plugins:{legend:{position:'top',labels:{boxWidth:12}}},
+      scales:{x:{ticks:{maxTicksLimit:6,maxRotation:0}},
+        y:{title:{display:true,text:'%'},position:'left'},
+        y1:{title:{display:true,text:'Relay'},position:'right',min:-0.1,max:1.1,
+          ticks:{stepSize:1,callback:function(v){return v===0?'OFF':v===1?'ON':''}},
+          grid:{drawOnChartArea:false}}}}});
+}
+function pushChart(d){
+  var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')+':'+String(t.getSeconds()).padStart(2,'0');
+  chartLabels.push(ts);
+  chamberData.push(d.chamber_valid?d.chamber_temp:null);
+  heatsinkData.push(d.heatsink_valid?d.heatsink_temp:null);
+  humidityData.push(d.chamber_valid?d.humidity:null);
+  relayData.push(d.relay_on?1:0);
+  while(chartLabels.length>MAX_PTS){chartLabels.shift();chamberData.shift();heatsinkData.shift();humidityData.shift();relayData.shift();}
+  tempChart.update();envChart.update();
+}
 function update(d){
   document.getElementById('ct').textContent=d.chamber_valid?fmt(d.chamber_temp,'\u00B0C'):'ERROR';
   document.getElementById('ct').className='val'+(d.chamber_valid?'':' err');
@@ -80,22 +147,37 @@ function update(d){
   document.getElementById('rs').className=d.relay_on?'relay-on':'relay-off';
   document.getElementById('sp').textContent=fmt(d.setpoint,'\u00B0C');
   document.getElementById('ot').style.display=d.overtemp?'block':'none';
-  var tb=document.getElementById('tb');
-  tb.textContent=d.enabled?'Stop Dryer':'Start Dryer';
-  tb.className='btn btn-toggle'+(d.enabled?'':' off');
+  document.getElementById('tf').style.display=d.thermal_fault?'block':'none';
+  var ls=document.getElementById('ls');
+  ls.textContent=d.lid_open?'OPEN':'CLOSED';
+  ls.style.color=d.lid_open?'#f44':'#0f0';
+  MODES.forEach(function(m){
+    var el=document.getElementById('m_'+m);
+    if(el)el.className='mbtn'+(d.mode===m?' active':'');
+  });
   document.getElementById('lu').textContent=new Date().toLocaleTimeString();
+  if(tempChart)pushChart(d);
 }
 function refresh(){fetch('/api/status').then(r=>r.json()).then(update).catch(()=>{})}
-function setPoint(){
-  var v=parseFloat(document.getElementById('si').value);
-  if(isNaN(v)||v<30||v>60)return;
-  fetch('/api/setpoint',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({setpoint:v})}).then(()=>refresh());
+function setMode(m){
+  fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mode:m})}).then(()=>refresh());
 }
-function toggle(){
-  fetch('/api/toggle',{method:'POST'}).then(()=>refresh());
+function fmtBytes(b){if(b<1024)return b+'B';return(b/1024).toFixed(1)+'KB'}
+function logStats(){
+  fetch('/api/log/stats').then(r=>r.json()).then(function(d){
+    document.getElementById('lr').textContent=d.record_count;
+    document.getElementById('lf').textContent=fmtBytes(d.file_size);
+    document.getElementById('ld').textContent=fmtBytes(d.disk_free);
+    document.getElementById('la').textContent=d.logging_active?'Active':'Stopped';
+    document.getElementById('la').style.color=d.logging_active?'#0f0':'#f44';
+  }).catch(function(){});
 }
-refresh();setInterval(refresh,60000);
+function clearLog(){
+  if(!confirm('Clear all log data?'))return;
+  fetch('/api/log',{method:'DELETE'}).then(()=>logStats());
+}
+initCharts();refresh();logStats();setInterval(refresh,10000);setInterval(logStats,60000);
 </script>
 </body>
 </html>
@@ -106,7 +188,7 @@ static void handleRoot(void) {
 }
 
 static void handleStatus(void) {
-    char json[256];
+    char json[384];
     char ct[8], hu[8], ht[8], sp[8];
 
     // Format floats manually to avoid %f on ESP32
@@ -118,56 +200,77 @@ static void handleStatus(void) {
     snprintf(json, sizeof(json),
         "{\"chamber_temp\":%s,\"humidity\":%s,\"heatsink_temp\":%s,"
         "\"chamber_valid\":%s,\"heatsink_valid\":%s,"
-        "\"relay_on\":%s,\"overtemp\":%s,\"setpoint\":%s,\"enabled\":%s}",
+        "\"relay_on\":%s,\"overtemp\":%s,\"setpoint\":%s,"
+        "\"enabled\":%s,\"lid_open\":%s,"
+        "\"thermal_fault\":%s,\"mode\":\"%s\"}",
         ct, hu, ht,
         sensors_isChamberValid() ? "true" : "false",
         sensors_isHeatsinkValid() ? "true" : "false",
         relay_isOn() ? "true" : "false",
         relay_isOvertemp() ? "true" : "false",
         sp,
-        relay_isEnabled() ? "true" : "false");
+        relay_getMode() != MODE_OFF ? "true" : "false",
+        lid_isOpen() ? "true" : "false",
+        relay_isThermalFault() ? "true" : "false",
+        relay_getModeName());
 
     server.send(200, "application/json", json);
 }
 
-static void handleSetpoint(void) {
+static void handleMode(void) {
     if (!server.hasArg("plain")) {
         server.send(400, "application/json", "{\"error\":\"no body\"}");
         return;
     }
 
     String body = server.arg("plain");
-    // Simple JSON parsing: find "setpoint" value
-    int idx = body.indexOf("\"setpoint\"");
+    // Simple JSON parsing: find "mode" value
+    int idx = body.indexOf("\"mode\"");
     if (idx < 0) {
-        server.send(400, "application/json", "{\"error\":\"missing setpoint\"}");
+        server.send(400, "application/json", "{\"error\":\"missing mode\"}");
         return;
     }
 
+    // Extract mode string between quotes after colon
     int colon = body.indexOf(':', idx);
-    if (colon < 0) {
+    int q1 = body.indexOf('"', colon);
+    int q2 = body.indexOf('"', q1 + 1);
+    if (colon < 0 || q1 < 0 || q2 < 0) {
         server.send(400, "application/json", "{\"error\":\"malformed json\"}");
         return;
     }
 
-    float val = body.substring(colon + 1).toFloat();
-    if (val < CHAMBER_SETPOINT_MIN || val > CHAMBER_SETPOINT_MAX) {
-        server.send(400, "application/json", "{\"error\":\"out of range\"}");
-        return;
+    String mode = body.substring(q1 + 1, q2);
+
+    struct { const char* name; DryerMode val; } modes[] = {
+        {"off", MODE_OFF}, {"maintain", MODE_MAINTAIN},
+        {"pla", MODE_DRY_PLA}, {"petg", MODE_DRY_PETG},
+        {"abs", MODE_DRY_ABS}, {"tpu", MODE_DRY_TPU},
+        {"mix", MODE_DRY_MIX}
+    };
+
+    for (auto &m : modes) {
+        if (mode == m.name) {
+            relay_setMode(m.val);
+            char resp[64];
+            snprintf(resp, sizeof(resp), "{\"mode\":\"%s\"}", relay_getModeName());
+            server.send(200, "application/json", resp);
+            return;
+        }
     }
 
-    relay_setSetpoint(val);
-
-    char resp[64];
-    snprintf(resp, sizeof(resp), "{\"setpoint\":%.1f}", (double)val);
-    server.send(200, "application/json", resp);
+    server.send(400, "application/json", "{\"error\":\"unknown mode\"}");
 }
 
 static void handleToggle(void) {
-    relay_setEnabled(!relay_isEnabled());
-    char resp[32];
-    snprintf(resp, sizeof(resp), "{\"enabled\":%s}",
-             relay_isEnabled() ? "true" : "false");
+    // Backward compat: toggle between OFF and MAINTAIN
+    if (relay_getMode() == MODE_OFF) {
+        relay_setMode(MODE_MAINTAIN);
+    } else {
+        relay_setMode(MODE_OFF);
+    }
+    char resp[64];
+    snprintf(resp, sizeof(resp), "{\"mode\":\"%s\"}", relay_getModeName());
     server.send(200, "application/json", resp);
 }
 
@@ -191,8 +294,9 @@ void webserver_init(void) {
 
         server.on("/", HTTP_GET, handleRoot);
         server.on("/api/status", HTTP_GET, handleStatus);
-        server.on("/api/setpoint", HTTP_POST, handleSetpoint);
+        server.on("/api/mode", HTTP_POST, handleMode);
         server.on("/api/toggle", HTTP_POST, handleToggle);
+        datalog_registerEndpoints(server);
         server.begin();
         Serial.println("HTTP server started");
     } else {

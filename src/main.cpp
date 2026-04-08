@@ -7,6 +7,8 @@
 #include "sensors.h"
 #include "display.h"
 #include "webserver.h"
+#include "lid.h"
+#include "datalog.h"
 
 static unsigned long lastSensorRead = 0;
 static int heatsinkFailCount = 0;
@@ -26,16 +28,17 @@ void setup() {
     Wire.setClock(50000);
     Wire.setTimeOut(50);
 
-    // I2C1 (Wire1): LCD — uses patched library with TwoWire& parameter
-    Wire1.begin(PIN_LCD_SDA, PIN_LCD_SCL);
-    Wire1.setClock(50000);
-    Wire1.setTimeOut(50);
+    // LCD shares I2C0 (Wire) with HTU21D — different addresses (0x27 vs 0x40)
 
     sensors_init();
+    lid_init();
     display_init();
 
     // WiFi connect (may block up to 10s, shows IP on LCD when connected)
     webserver_init();
+
+    // Data logging (LittleFS + NTP, must be after WiFi for NTP sync)
+    datalog_init();
 
     // Show IP on LCD if connected
     if (WiFi.status() == WL_CONNECTED) {
@@ -43,12 +46,14 @@ void setup() {
     }
 
     // Watchdog: reset ESP if loop hangs for >15s (after WiFi is done)
+    // Arduino ESP32 core 3.x already initializes TWDT at boot,
+    // so use reconfigure() to change the timeout instead of init()
     esp_task_wdt_config_t wdtConfig = {
         .timeout_ms = 15000,
         .idle_core_mask = 0,
         .trigger_panic = true
     };
-    esp_task_wdt_init(&wdtConfig);
+    esp_task_wdt_reconfigure(&wdtConfig);
     esp_task_wdt_add(NULL);
 
     Serial.println("Filament dryer ready");
@@ -67,12 +72,14 @@ void loop() {
         lastSensorRead = now;
 
         sensors_read();
+        lid_read();
 
         float chamberTemp  = sensors_getChamberTemp();
         float humidity     = sensors_getHumidity();
         float heatsinkTemp = sensors_getHeatsinkTemp();
         bool  chamberValid = sensors_isChamberValid();
         bool  heatsinkValid = sensors_isHeatsinkValid();
+        bool  lidOpen       = lid_isOpen();
 
         // Track consecutive sensor failures
         if (!heatsinkValid) {
@@ -95,28 +102,35 @@ void loop() {
             relay_forceOff();
             Serial.println("SAFETY: Chamber sensor failure limit reached, relay forced OFF");
         } else {
-            relay_update(chamberTemp, chamberValid, heatsinkTemp, heatsinkValid);
+            relay_update(chamberTemp, chamberValid, heatsinkTemp, heatsinkValid, lidOpen, humidity);
         }
+
+        // Data logging (buffered, flushed to flash periodically)
+        datalog_record(chamberTemp, humidity, heatsinkTemp,
+                       chamberValid, heatsinkValid,
+                       relay_isOn(), lidOpen,
+                       relay_getSetpoint(), relay_isOvertemp(),
+                       relay_isThermalFault(), relay_getModeName());
 
         // Serial logging
         Serial.printf("Chamber: %.1fC (%s) | Humidity: %.1f%% | Heatsink: %.1fC (%s) | "
-                       "Relay: %s | Setpoint: %.1fC | Enabled: %s\n",
+                       "Relay: %s | Mode: %s | Setpoint: %.1fC | Lid: %s | ThermalFault: %s\n",
                        chamberTemp, chamberValid ? "ok" : "ERR",
                        humidity,
                        heatsinkTemp, heatsinkValid ? "ok" : "ERR",
                        relay_isOn() ? "ON" : "OFF",
+                       relay_getModeName(),
                        relay_getSetpoint(),
-                       relay_isEnabled() ? "yes" : "no");
+                       lidOpen ? "OPEN" : "closed",
+                       relay_isThermalFault() ? "YES" : "no");
+
+        // Display update (same interval as sensor reads to avoid hammering I2C)
+        display_update(chamberTemp, humidity, heatsinkTemp,
+                       chamberValid, heatsinkValid,
+                       relay_isOn(), relay_isOvertemp(), lidOpen,
+                       relay_isThermalFault(), relay_getModeLabel());
     }
 
-    // Display update (static 2-line layout, no cycling)
-    display_update(
-        sensors_getChamberTemp(),
-        sensors_getHumidity(),
-        sensors_getHeatsinkTemp(),
-        sensors_isChamberValid(),
-        sensors_isHeatsinkValid(),
-        relay_isOn(),
-        relay_isOvertemp()
-    );
+    // Flush data log buffer to flash periodically
+    datalog_flush();
 }
