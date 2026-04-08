@@ -30,7 +30,7 @@
 
 // --- Chamber temperature control (bang-bang) ---
 #define CHAMBER_SETPOINT_DEFAULT  50.0f   // Default target (C)
-#define CHAMBER_SETPOINT_MAX      60.0f   // Maximum allowed setpoint (C)
+#define CHAMBER_SETPOINT_MAX      52.0f   // Maximum allowed setpoint (C) — practical ceiling for uninsulated enclosure
 #define CHAMBER_SETPOINT_MIN      30.0f   // Minimum allowed setpoint (C)
 #define CHAMBER_HYSTERESIS        2.0f    // Bang-bang hysteresis (C)
 
@@ -44,15 +44,26 @@
 // --- Thermal fault detection ---
 #define THERMAL_CHECK_PERIOD_MS   180000UL   // 3 min continuous relay ON before checking (ms)
 #define THERMAL_MIN_RISE          1.0f       // Minimum expected chamber rise in check period (C)
-#define THERMAL_NEAR_SETPOINT     3.0f       // Skip check when within this range of setpoint (C)
+#define THERMAL_NEAR_SETPOINT     10.0f      // Skip check when within this range of setpoint (C)
 
 // --- Operating mode presets ---
-#define MAINTAIN_HUMIDITY_TARGET  40.0f      // Humidity threshold for maintain mode (%)
+#define MAINTAIN_HUMIDITY_TARGET  20.0f      // Humidity threshold for maintain mode (%)
+#define MAINTAIN_HUMIDITY_HYST    2.0f       // Hysteresis: relay stays off until humidity > target + hyst (%)
 #define MAINTAIN_TEMP_TARGET      40.0f      // Heating target for maintain mode (C)
 #define PRESET_PLA_TEMP           45.0f      // PLA drying temperature (C)
-#define PRESET_PETG_TEMP          55.0f      // PETG drying temperature (C)
-#define PRESET_ABS_TEMP           60.0f      // ABS drying temperature (C)
+#define PRESET_PETG_TEMP          50.0f      // PETG drying temperature (C) — compensated with longer time
+#define PRESET_ABS_TEMP           52.0f      // ABS drying temperature (C) — compensated with longer time
 #define PRESET_TPU_TEMP           50.0f      // TPU drying temperature (C)
 #define PRESET_MIX_TEMP           45.0f      // Mixed plastics safe drying temperature (C)
+
+// --- Drying durations (hours) — lower temps = longer times ---
+#define DRYING_HOURS_PLA    4
+#define DRYING_HOURS_PETG   6       // Longer to compensate for 50C (recommended 55-65C)
+#define DRYING_HOURS_ABS    8       // Much longer to compensate for 52C (recommended 60-80C)
+#define DRYING_HOURS_TPU    5
+#define DRYING_HOURS_MIX    4
+
+// --- NTC short detection ---
+#define NTC_VOUT_SHORT_FLOOR  0.15f // Below this voltage, NTC is shorted or ADC unreliable (V)
 
 #endif

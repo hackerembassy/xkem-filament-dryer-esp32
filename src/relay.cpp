@@ -7,6 +7,11 @@ static float     setpoint      = MAINTAIN_TEMP_TARGET;
 static bool      relayOn       = false;
 static bool      heatsinkOT    = false;
 static bool      chamberReached = false;
+static bool      humidityReached = false;
+
+// Drying timer
+static unsigned long dryingStartMs    = 0;
+static unsigned long dryingDurationMs = 0;
 
 // Thermal fault detection
 static bool          thermalFault    = false;
@@ -16,6 +21,17 @@ static float         thermalStartTemp = 0.0f;
 
 static const char* MODE_NAMES[]  = {"off", "maintain", "pla", "petg", "abs", "tpu", "mix"};
 static const char* MODE_LABELS[] = {"OFF", "MNT", "PLA", "PET", "ABS", "TPU", "MIX"};
+
+static unsigned long getDryingDurationMs(DryerMode mode) {
+    switch (mode) {
+        case MODE_DRY_PLA:  return DRYING_HOURS_PLA  * 3600000UL;
+        case MODE_DRY_PETG: return DRYING_HOURS_PETG * 3600000UL;
+        case MODE_DRY_ABS:  return DRYING_HOURS_ABS  * 3600000UL;
+        case MODE_DRY_TPU:  return DRYING_HOURS_TPU  * 3600000UL;
+        case MODE_DRY_MIX:  return DRYING_HOURS_MIX  * 3600000UL;
+        default:            return 0;
+    }
+}
 
 static void applyModeSetpoint(void) {
     switch (currentMode) {
@@ -73,6 +89,13 @@ void relay_update(float chamberTemp, bool chamberValid,
         return;
     }
 
+    // Priority 2.5: drying timer expiry — auto-revert to MAINTAIN
+    if (dryingDurationMs > 0 && (millis() - dryingStartMs >= dryingDurationMs)) {
+        relay_setMode(MODE_MAINTAIN);
+        Serial.println("Drying timer expired, reverting to MAINTAIN");
+        return;
+    }
+
     // Priority 3: heatsink sensor invalid
     if (!heatsinkValid) {
         relayOff();
@@ -90,12 +113,19 @@ void relay_update(float chamberTemp, bool chamberValid,
         return;
     }
 
-    // Maintain mode: humidity gate
+    // Maintain mode: humidity gate with hysteresis
     if (currentMode == MODE_MAINTAIN) {
-        if (chamberValid && humidity <= MAINTAIN_HUMIDITY_TARGET) {
-            relayOff();
-            chamberReached = false;
-            return;
+        if (chamberValid) {
+            if (humidity <= MAINTAIN_HUMIDITY_TARGET) {
+                humidityReached = true;
+            } else if (humidity > (MAINTAIN_HUMIDITY_TARGET + MAINTAIN_HUMIDITY_HYST)) {
+                humidityReached = false;
+            }
+            if (humidityReached) {
+                relayOff();
+                chamberReached = false;
+                return;
+            }
         }
     }
 
@@ -158,9 +188,12 @@ bool relay_isThermalFault(void) {
 void relay_setMode(DryerMode mode) {
     currentMode = mode;
     applyModeSetpoint();
-    chamberReached  = false;
-    thermalFault    = false;
-    thermalTracking = false;
+    chamberReached   = false;
+    humidityReached  = false;
+    thermalFault     = false;
+    thermalTracking  = false;
+    dryingDurationMs = getDryingDurationMs(mode);
+    dryingStartMs    = millis();
     if (currentMode == MODE_OFF) {
         relayOff();
     }
@@ -176,4 +209,11 @@ const char* relay_getModeName(void) {
 
 const char* relay_getModeLabel(void) {
     return MODE_LABELS[(int)currentMode];
+}
+
+unsigned long relay_getDryingRemaining(void) {
+    if (dryingDurationMs == 0) return 0;
+    unsigned long elapsed = millis() - dryingStartMs;
+    if (elapsed >= dryingDurationMs) return 0;
+    return (dryingDurationMs - elapsed) / 1000;
 }

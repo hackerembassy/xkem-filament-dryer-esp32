@@ -70,17 +70,19 @@ h1{color:#0ff;font-size:1.4em;text-align:center;margin-bottom:20px;
     <span id="rs" class="relay-off">--</span></div>
   <div class="row" style="margin-top:8px"><h2>Setpoint</h2>
     <span class="val" id="sp" style="font-size:1.2em">--</span></div>
+  <div class="row" style="margin-top:8px"><h2>Drying Timer</h2>
+    <span class="val" id="dt" style="font-size:1.2em">--</span></div>
 </div>
 <div class="card">
   <h2>Mode</h2>
   <div class="mode-grid">
     <button class="mbtn" id="m_off" onclick="setMode('off')">OFF</button>
     <button class="mbtn" id="m_maintain" onclick="setMode('maintain')">MAINTAIN</button>
-    <button class="mbtn" id="m_pla" onclick="setMode('pla')">PLA 45&deg;C</button>
-    <button class="mbtn" id="m_petg" onclick="setMode('petg')">PETG 55&deg;C</button>
-    <button class="mbtn" id="m_abs" onclick="setMode('abs')">ABS 60&deg;C</button>
-    <button class="mbtn" id="m_tpu" onclick="setMode('tpu')">TPU 50&deg;C</button>
-    <button class="mbtn" id="m_mix" onclick="setMode('mix')">MIX 45&deg;C</button>
+    <button class="mbtn" id="m_pla" onclick="setMode('pla')">PLA 45&deg;C 4h</button>
+    <button class="mbtn" id="m_petg" onclick="setMode('petg')">PETG 50&deg;C 6h</button>
+    <button class="mbtn" id="m_abs" onclick="setMode('abs')">ABS 52&deg;C 8h</button>
+    <button class="mbtn" id="m_tpu" onclick="setMode('tpu')">TPU 50&deg;C 5h</button>
+    <button class="mbtn" id="m_mix" onclick="setMode('mix')">MIX 45&deg;C 4h</button>
   </div>
 </div>
 <div class="chart-wrap"><h2>Temperature</h2>
@@ -155,6 +157,10 @@ function update(d){
     var el=document.getElementById('m_'+m);
     if(el)el.className='mbtn'+(d.mode===m?' active':'');
   });
+  var dr=d.drying_remaining;
+  if(dr>0){var h=Math.floor(dr/3600),m=Math.floor((dr%3600)/60),s=dr%60;
+    document.getElementById('dt').textContent=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  }else{document.getElementById('dt').textContent='--';}
   document.getElementById('lu').textContent=new Date().toLocaleTimeString();
   if(tempChart)pushChart(d);
 }
@@ -188,7 +194,7 @@ static void handleRoot(void) {
 }
 
 static void handleStatus(void) {
-    char json[384];
+    char json[448];
     char ct[8], hu[8], ht[8], sp[8];
 
     // Format floats manually to avoid %f on ESP32
@@ -202,7 +208,8 @@ static void handleStatus(void) {
         "\"chamber_valid\":%s,\"heatsink_valid\":%s,"
         "\"relay_on\":%s,\"overtemp\":%s,\"setpoint\":%s,"
         "\"enabled\":%s,\"lid_open\":%s,"
-        "\"thermal_fault\":%s,\"mode\":\"%s\"}",
+        "\"thermal_fault\":%s,\"mode\":\"%s\","
+        "\"drying_remaining\":%lu}",
         ct, hu, ht,
         sensors_isChamberValid() ? "true" : "false",
         sensors_isHeatsinkValid() ? "true" : "false",
@@ -212,7 +219,8 @@ static void handleStatus(void) {
         relay_getMode() != MODE_OFF ? "true" : "false",
         lid_isOpen() ? "true" : "false",
         relay_isThermalFault() ? "true" : "false",
-        relay_getModeName());
+        relay_getModeName(),
+        relay_getDryingRemaining());
 
     server.send(200, "application/json", json);
 }

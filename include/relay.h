@@ -24,5 +24,6 @@ void        relay_setMode(DryerMode mode);
 DryerMode   relay_getMode(void);
 const char* relay_getModeName(void);
 const char* relay_getModeLabel(void);
+unsigned long relay_getDryingRemaining(void);
 
 #endif
