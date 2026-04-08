@@ -7,7 +7,8 @@ void datalog_init(void);
 void datalog_record(float chamberTemp, float humidity, float heatsinkTemp,
                     bool chamberValid, bool heatsinkValid,
                     bool relayOn, bool lidOpen,
-                    float setpoint, bool enabled, bool overtemp);
+                    float setpoint, bool overtemp,
+                    bool thermalFault, const char* mode);
 void datalog_flush(void);
 void datalog_registerEndpoints(WebServer &server);
 

@@ -11,7 +11,7 @@
 
 static const char CSV_HEADER[] = "timestamp_ms,millis_boot,chamber_temp,humidity,"
     "heatsink_temp,chamber_valid,heatsink_valid,relay_on,lid_open,"
-    "setpoint,enabled,overtemp\n";
+    "setpoint,overtemp,thermal_fault,mode\n";
 
 struct LogRecord {
     unsigned long long timestampMs;
@@ -24,8 +24,9 @@ struct LogRecord {
     bool relayOn;
     bool lidOpen;
     float setpoint;
-    bool enabled;
     bool overtemp;
+    bool thermalFault;
+    char mode[10];
 };
 
 static LogRecord buffer[BUFFER_SIZE];
@@ -69,7 +70,7 @@ static void writeBufferToFile(void) {
         snprintf(ht, sizeof(ht), "%.1f", (double)r.heatsinkTemp);
         snprintf(sp, sizeof(sp), "%.1f", (double)r.setpoint);
 
-        snprintf(line, sizeof(line), "%llu,%lu,%s,%s,%s,%d,%d,%d,%d,%s,%d,%d\n",
+        snprintf(line, sizeof(line), "%llu,%lu,%s,%s,%s,%d,%d,%d,%d,%s,%d,%d,%s\n",
                  r.timestampMs, r.millisBoot,
                  ct, hu, ht,
                  r.chamberValid ? 1 : 0,
@@ -77,8 +78,9 @@ static void writeBufferToFile(void) {
                  r.relayOn ? 1 : 0,
                  r.lidOpen ? 1 : 0,
                  sp,
-                 r.enabled ? 1 : 0,
-                 r.overtemp ? 1 : 0);
+                 r.overtemp ? 1 : 0,
+                 r.thermalFault ? 1 : 0,
+                 r.mode);
         f.print(line);
     }
     f.close();
@@ -100,7 +102,8 @@ void datalog_init(void) {
 void datalog_record(float chamberTemp, float humidity, float heatsinkTemp,
                     bool chamberValid, bool heatsinkValid,
                     bool relayOn, bool lidOpen,
-                    float setpoint, bool enabled, bool overtemp) {
+                    float setpoint, bool overtemp,
+                    bool thermalFault, const char* mode) {
     if (!loggingActive || !fsReady) return;
 
     if (!diskHasSpace()) {
@@ -125,8 +128,10 @@ void datalog_record(float chamberTemp, float humidity, float heatsinkTemp,
     r.relayOn       = relayOn;
     r.lidOpen       = lidOpen;
     r.setpoint      = setpoint;
-    r.enabled       = enabled;
     r.overtemp      = overtemp;
+    r.thermalFault  = thermalFault;
+    strncpy(r.mode, mode, sizeof(r.mode) - 1);
+    r.mode[sizeof(r.mode) - 1] = '\0';
 }
 
 void datalog_flush(void) {

@@ -109,9 +109,8 @@ void loop() {
         datalog_record(chamberTemp, humidity, heatsinkTemp,
                        chamberValid, heatsinkValid,
                        relay_isOn(), lidOpen,
-                       relay_getSetpoint(),
-                       relay_getMode() != MODE_OFF,
-                       relay_isOvertemp());
+                       relay_getSetpoint(), relay_isOvertemp(),
+                       relay_isThermalFault(), relay_getModeName());
 
         // Serial logging
         Serial.printf("Chamber: %.1fC (%s) | Humidity: %.1f%% | Heatsink: %.1fC (%s) | "
