@@ -41,4 +41,18 @@
 // --- Sensor failure limits ---
 #define SENSOR_FAIL_MAX           5       // Consecutive failures before forced relay off
 
+// --- Thermal fault detection ---
+#define THERMAL_CHECK_PERIOD_MS   180000UL   // 3 min continuous relay ON before checking (ms)
+#define THERMAL_MIN_RISE          1.0f       // Minimum expected chamber rise in check period (C)
+#define THERMAL_NEAR_SETPOINT     3.0f       // Skip check when within this range of setpoint (C)
+
+// --- Operating mode presets ---
+#define MAINTAIN_HUMIDITY_TARGET  40.0f      // Humidity threshold for maintain mode (%)
+#define MAINTAIN_TEMP_TARGET      40.0f      // Heating target for maintain mode (C)
+#define PRESET_PLA_TEMP           45.0f      // PLA drying temperature (C)
+#define PRESET_PETG_TEMP          55.0f      // PETG drying temperature (C)
+#define PRESET_ABS_TEMP           60.0f      // ABS drying temperature (C)
+#define PRESET_TPU_TEMP           50.0f      // TPU drying temperature (C)
+#define PRESET_MIX_TEMP           45.0f      // Mixed plastics safe drying temperature (C)
+
 #endif

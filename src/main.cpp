@@ -102,31 +102,34 @@ void loop() {
             relay_forceOff();
             Serial.println("SAFETY: Chamber sensor failure limit reached, relay forced OFF");
         } else {
-            relay_update(chamberTemp, chamberValid, heatsinkTemp, heatsinkValid, lidOpen);
+            relay_update(chamberTemp, chamberValid, heatsinkTemp, heatsinkValid, lidOpen, humidity);
         }
 
         // Data logging (buffered, flushed to flash periodically)
         datalog_record(chamberTemp, humidity, heatsinkTemp,
                        chamberValid, heatsinkValid,
                        relay_isOn(), lidOpen,
-                       relay_getSetpoint(), relay_isEnabled(),
+                       relay_getSetpoint(),
+                       relay_getMode() != MODE_OFF,
                        relay_isOvertemp());
 
         // Serial logging
         Serial.printf("Chamber: %.1fC (%s) | Humidity: %.1f%% | Heatsink: %.1fC (%s) | "
-                       "Relay: %s | Setpoint: %.1fC | Enabled: %s | Lid: %s\n",
+                       "Relay: %s | Mode: %s | Setpoint: %.1fC | Lid: %s | ThermalFault: %s\n",
                        chamberTemp, chamberValid ? "ok" : "ERR",
                        humidity,
                        heatsinkTemp, heatsinkValid ? "ok" : "ERR",
                        relay_isOn() ? "ON" : "OFF",
+                       relay_getModeName(),
                        relay_getSetpoint(),
-                       relay_isEnabled() ? "yes" : "no",
-                       lidOpen ? "OPEN" : "closed");
+                       lidOpen ? "OPEN" : "closed",
+                       relay_isThermalFault() ? "YES" : "no");
 
         // Display update (same interval as sensor reads to avoid hammering I2C)
         display_update(chamberTemp, humidity, heatsinkTemp,
                        chamberValid, heatsinkValid,
-                       relay_isOn(), relay_isOvertemp(), lidOpen);
+                       relay_isOn(), relay_isOvertemp(), lidOpen,
+                       relay_isThermalFault(), relay_getModeLabel());
     }
 
     // Flush data log buffer to flash periodically

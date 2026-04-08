@@ -34,7 +34,8 @@ static void fmtTemp(char *buf, size_t len, float val) {
 
 void display_update(float chamberTemp, float humidity, float heatsinkTemp,
                     bool chamberValid, bool heatsinkValid,
-                    bool relayOn, bool overtemp, bool lidOpen) {
+                    bool relayOn, bool overtemp, bool lidOpen,
+                    bool thermalFault, const char* modeLabel) {
     char line[21]; // extra room to avoid truncation warnings; LCD only shows 16
 
     // Line 1: "T:23.4 RH:61.2 " or "T:ERR  RH:ERR  "
@@ -51,17 +52,21 @@ void display_update(float chamberTemp, float humidity, float heatsinkTemp,
     line[LCD_COLS] = '\0';
     lcd.print(line);
 
-    // Line 2: "HS:45.2 R:OFF L" or "HS:HOT  R:ON  O"
-    // Last character: L=lid closed, O=lid open
+    // Line 2: "HS:45.2 PLA ON L" or "*THERMAL FAULT *"
     lcd.setCursor(0, 1);
+    if (thermalFault) {
+        lcd.print("*THERMAL FAULT *");
+        return;
+    }
+
     if (!heatsinkValid) {
-        snprintf(line, sizeof(line), "HS:ERR  R:%-4s", relayOn ? "ON" : "OFF");
+        snprintf(line, sizeof(line), "HS:%-4s %s %-2s", "ERR", modeLabel, relayOn ? "ON" : "--");
     } else if (overtemp) {
-        snprintf(line, sizeof(line), "HS:HOT  R:%-4s", relayOn ? "ON" : "OFF");
+        snprintf(line, sizeof(line), "HS:%-4s %s %-2s", "HOT", modeLabel, relayOn ? "ON" : "--");
     } else {
         char hbuf[7];
         fmtTemp(hbuf, sizeof(hbuf), heatsinkTemp);
-        snprintf(line, sizeof(line), "HS:%-4s R:%-3s", hbuf, relayOn ? "ON" : "OFF");
+        snprintf(line, sizeof(line), "HS:%-4s %s %-2s", hbuf, modeLabel, relayOn ? "ON" : "--");
     }
     // Pad to 15 chars and append lid indicator at position 15
     int len = strlen(line);
