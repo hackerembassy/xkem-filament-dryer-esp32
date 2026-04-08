@@ -4,7 +4,7 @@ ESP32 firmware for a DIY filament dryer with bang-bang temperature control, web 
 
 ## Features
 
-- **Operating modes**: OFF, MAINTAIN (humidity-gated overnight mode at 40C), and active drying presets (PLA 45C, PETG 55C, ABS 60C, TPU 50C, MIX 45C)
+- **Operating modes**: OFF, MAINTAIN (humidity-gated overnight mode at 40C), and timed drying presets (PLA 45C/4h, PETG 50C/6h, ABS 52C/8h, TPU 50C/5h, MIX 45C/4h)
 - **Bang-bang chamber temperature control** with 2C hysteresis
 - **Lid switch safety interlock** using reed switch on GPIO 27 — relay disabled when lid is open
 - **Thermal fault detection** — detects lid-open-but-reads-closed by monitoring chamber temp rise (latches fault if <1C rise after 3 min of continuous heating)
@@ -78,28 +78,29 @@ The firmware implements multiple independent safety layers, evaluated in priorit
 | 4 | Heatsink sensor invalid | NTC reading outside -10C to 200C | Relay OFF immediately |
 | 5 | Heatsink overtemp | Heatsink >= 125C | Relay OFF, recovers at < 115C |
 | 6 | Consecutive sensor failure | 5 consecutive invalid readings (10s) | Relay forced OFF |
-| 7 | Humidity gate (MAINTAIN mode) | Humidity <= 40% | Relay OFF until moisture rises |
-| 8 | Chamber bang-bang | Chamber temp vs setpoint | Normal heating control |
-| 9 | Thermal fault check | Relay ON >3 min, chamber rise <1C | Latch thermal fault |
-| 10 | Hardware watchdog | Main loop hangs > 15s | ESP32 hard reset (relay starts OFF) |
+| 7 | Drying timer expiry | Drying duration elapsed | Auto-revert to MAINTAIN mode |
+| 8 | Humidity gate (MAINTAIN mode) | Humidity <= 20% | Relay OFF until humidity > 22% (hysteresis) |
+| 9 | Chamber bang-bang | Chamber temp vs setpoint | Normal heating control |
+| 10 | Thermal fault check | Relay ON >3 min, chamber rise <1C | Latch thermal fault |
+| 11 | Hardware watchdog | Main loop hangs > 15s | ESP32 hard reset (relay starts OFF) |
 
 ### Thermal Fault Detection
 
-When the relay has been continuously ON for 3 minutes, the firmware checks whether the chamber temperature rose by at least 1.0C. If not, it latches a thermal fault and disables the heater. This catches the scenario where the lid physically open but the reed switch still reads closed (e.g., magnet misalignment). The check is skipped when the chamber is within 3C of setpoint (relay cycling zone). After passing the check, tracking restarts from the current temp to catch mid-session lid opening. The fault clears only when the user changes mode.
+When the relay has been continuously ON for 3 minutes, the firmware checks whether the chamber temperature rose by at least 1.0C. If not, it latches a thermal fault and disables the heater. This catches the scenario where the lid is physically open but the reed switch still reads closed (e.g., magnet misalignment). The check is skipped when the chamber is within 10C of setpoint (relay cycling zone). After passing the check, tracking restarts from the current temp to catch mid-session lid opening. The fault clears only when the user changes mode.
 
 **Not covered by firmware**: relay welding (SSR fails shorted). A thermal fuse on the heater element is recommended as hardware backstop.
 
 ## Operating Modes
 
-| Mode | Setpoint | Behavior |
-| --- | --- | --- |
-| OFF | -- | Heater disabled |
-| MAINTAIN | 40C | Humidity-gated: heats only when humidity > 40%. Safe for overnight use. |
-| PLA | 45C | Continuous drying |
-| PETG | 55C | Continuous drying |
-| ABS | 60C | Continuous drying |
-| TPU | 50C | Continuous drying |
-| MIX | 45C | Safe temperature for mixed spool types |
+| Mode | Setpoint | Duration | Behavior |
+| --- | --- | --- | --- |
+| OFF | -- | -- | Heater disabled |
+| MAINTAIN | 40C | Indefinite | Humidity-gated: heats only when humidity > 22%, off when <= 20%. Safe for overnight use. |
+| PLA | 45C | 4h | Timed drying, auto-reverts to MAINTAIN on expiry |
+| PETG | 50C | 6h | Timed drying, longer to compensate for reduced temp |
+| ABS | 52C | 8h | Timed drying, much longer to compensate for reduced temp |
+| TPU | 50C | 5h | Timed drying, auto-reverts to MAINTAIN on expiry |
+| MIX | 45C | 4h | Safe temperature for mixed spool types |
 
 Default mode on boot is MAINTAIN.
 
@@ -132,7 +133,8 @@ The ESP32 hosts a web interface on port 80 when connected to WiFi. The IP addres
   "enabled": true,
   "lid_open": false,
   "thermal_fault": false,
-  "mode": "pla"
+  "mode": "pla",
+  "drying_remaining": 14400
 }
 ```
 
@@ -182,9 +184,11 @@ Key parameters in `include/config.h`:
 | `SENSOR_READ_INTERVAL_MS` | 2000 | Sensor polling interval |
 | `THERMAL_CHECK_PERIOD_MS` | 180000 | Time before thermal fault check (3 min) |
 | `THERMAL_MIN_RISE` | 1.0C | Minimum expected chamber rise in check period |
-| `THERMAL_NEAR_SETPOINT` | 3.0C | Skip thermal check within this range of setpoint |
-| `MAINTAIN_HUMIDITY_TARGET` | 40.0% | Humidity threshold for maintain mode |
+| `THERMAL_NEAR_SETPOINT` | 10.0C | Skip thermal check within this range of setpoint |
+| `MAINTAIN_HUMIDITY_TARGET` | 20.0% | Humidity threshold for maintain mode |
+| `MAINTAIN_HUMIDITY_HYST` | 2.0% | Maintain mode humidity hysteresis |
 | `MAINTAIN_TEMP_TARGET` | 40.0C | Heating target for maintain mode |
+| `NTC_VOUT_SHORT_FLOOR` | 0.15V | ADC voltage floor for NTC short detection |
 
 ## Project Structure
 
