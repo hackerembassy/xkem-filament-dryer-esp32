@@ -15,7 +15,8 @@ ESP32 firmware for a DIY filament dryer with bang-bang temperature control, web 
 - **Web dashboard** with mode selector, live time-series charts, and data log management
 - **REST API** for integration with home automation systems
 - **Hardware watchdog** (15s timeout) with automatic recovery
-
+- **Thermal fuse**  10A 133C on heater to cut power in case of relay fusing on
+- **Fuse** 1A fuse on mains. 
 ## Circuit
 
 ```text
@@ -64,6 +65,8 @@ ESP32 Dev Module
 | Relay module | Heater control (SSR or mechanical) |
 | 10K resistor | NTC voltage divider fixed resistor |
 | 100nF capacitor | ADC input filter |
+| 10A 133C Thermal fuse | on thermal elements |
+| 1A Fuse | on mains power |
 
 ## Safety Layers
 
