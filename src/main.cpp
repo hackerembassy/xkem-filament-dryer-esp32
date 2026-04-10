@@ -64,6 +64,7 @@ void loop() {
 
     // Handle HTTP requests (non-blocking)
     webserver_loop();
+    yield();
 
     unsigned long now = millis();
 

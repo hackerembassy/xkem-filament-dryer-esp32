@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <WebServer.h>
+#include <esp_task_wdt.h>
 #include <time.h>
 #include "datalog.h"
 
@@ -8,6 +9,8 @@
 #define BUFFER_SIZE     16
 #define FLUSH_INTERVAL  30000   // 30 seconds
 #define DISK_RESERVE    4096    // stop logging when free space < 4KB
+#define LOG_MAX_SIZE    524288  // 512KB — ~8h at 2s interval, prevents unbounded growth
+#define DOWNLOAD_CHUNK  4096    // chunk size for streaming file downloads
 
 static const char CSV_HEADER[] = "timestamp_ms,millis_boot,chamber_temp,humidity,"
     "heatsink_temp,chamber_valid,heatsink_valid,relay_on,lid_open,"
@@ -34,6 +37,7 @@ static int bufferCount = 0;
 static unsigned long lastFlush = 0;
 static bool loggingActive = true;
 static bool fsReady = false;
+static int totalRecordCount = 0;  // persistent in-memory record count
 
 static unsigned long long getEpochMs(void) {
     struct timeval tv;
@@ -95,6 +99,24 @@ void datalog_init(void) {
     fsReady = true;
     Serial.println("LittleFS: mounted");
 
+    // Initialize record count from existing log file (one-time at boot)
+    File f = LittleFS.open(LOG_PATH, "r");
+    if (f) {
+        int lines = 0;
+        int bytesRead = 0;
+        while (f.available()) {
+            if (f.read() == '\n') lines++;
+            // Reset WDT periodically during large file scan
+            if (++bytesRead % 1024 == 0) esp_task_wdt_reset();
+        }
+        // Subtract 1 for the CSV header line
+        totalRecordCount = (lines > 0) ? lines - 1 : 0;
+        size_t existingSize = f.size();
+        f.close();
+        Serial.printf("Datalog: %d existing records (%u bytes)\n",
+                       totalRecordCount, (unsigned)existingSize);
+    }
+
     // NTP setup (non-blocking, syncs in background after WiFi connects)
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 }
@@ -112,12 +134,25 @@ void datalog_record(float chamberTemp, float humidity, float heatsinkTemp,
         return;
     }
 
+    // Check log file size cap to prevent unbounded growth
+    File lf = LittleFS.open(LOG_PATH, "r");
+    if (lf) {
+        size_t sz = lf.size();
+        lf.close();
+        if (sz >= LOG_MAX_SIZE) {
+            loggingActive = false;
+            Serial.println("Datalog: max file size reached, logging stopped");
+            return;
+        }
+    }
+
     // Flush if buffer is full
     if (bufferCount >= BUFFER_SIZE) {
         writeBufferToFile();
     }
 
     LogRecord &r = buffer[bufferCount++];
+    totalRecordCount++;
     r.timestampMs   = getEpochMs();
     r.millisBoot    = millis();
     r.chamberTemp   = chamberTemp;
@@ -161,7 +196,20 @@ static void handleLogDownload(void) {
         return;
     }
 
-    httpServer->streamFile(f, "text/csv");
+    // Chunked download with WDT resets to prevent watchdog timeout on large files
+    size_t fileSize = f.size();
+    httpServer->setContentLength(fileSize);
+    httpServer->send(200, "text/csv", "");
+
+    uint8_t buf[DOWNLOAD_CHUNK];
+    while (f.available()) {
+        size_t bytesRead = f.read(buf, sizeof(buf));
+        if (bytesRead > 0) {
+            httpServer->client().write(buf, bytesRead);
+        }
+        esp_task_wdt_reset();
+        yield();
+    }
     f.close();
 }
 
@@ -172,6 +220,7 @@ static void handleLogClear(void) {
     }
 
     bufferCount = 0;
+    totalRecordCount = 0;
     LittleFS.remove(LOG_PATH);
     loggingActive = true;
     httpServer->send(200, "application/json", "{\"cleared\":true}");
@@ -188,16 +237,9 @@ static void handleLogStats(void) {
     writeBufferToFile();
 
     size_t fileSize = 0;
-    int recordCount = 0;
-
     File f = LittleFS.open(LOG_PATH, "r");
     if (f) {
         fileSize = f.size();
-        // Count lines (subtract 1 for header)
-        while (f.available()) {
-            if (f.read() == '\n') recordCount++;
-        }
-        if (recordCount > 0) recordCount--; // exclude header line
         f.close();
     }
 
@@ -206,7 +248,7 @@ static void handleLogStats(void) {
     char json[192];
     snprintf(json, sizeof(json),
         "{\"file_size\":%u,\"record_count\":%d,\"disk_free\":%u,\"logging_active\":%s}",
-        (unsigned)fileSize, recordCount, (unsigned)diskFree,
+        (unsigned)fileSize, totalRecordCount, (unsigned)diskFree,
         loggingActive ? "true" : "false");
     httpServer->send(200, "application/json", json);
 }
