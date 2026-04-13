@@ -9,27 +9,31 @@
 #define BUFFER_SIZE     16
 #define FLUSH_INTERVAL  30000   // 30 seconds
 #define DISK_RESERVE    4096    // stop logging when free space < 4KB
-#define LOG_MAX_SIZE    524288  // 512KB — ~8h at 2s interval, prevents unbounded growth
+#define LOG_MAX_SIZE    1048576 // 1MB — ~16h at 2s interval with compact format
 #define DOWNLOAD_CHUNK  4096    // chunk size for streaming file downloads
 
-static const char CSV_HEADER[] = "timestamp_ms,millis_boot,chamber_temp,humidity,"
-    "heatsink_temp,chamber_valid,heatsink_valid,relay_on,lid_open,"
-    "setpoint,overtemp,thermal_fault,mode\n";
+// Compact CSV: 7 fields, ~35 bytes/record (was 13 fields, ~59 bytes)
+static const char CSV_HEADER[] = "ts,ct,hu,ht,fl,sp,md\n";
+
+// Old header prefix for format migration detection at boot
+static const char OLD_HEADER_PREFIX[] = "timestamp_ms";
+
+// Bitmask layout for flags field:
+//   bit 0 (1):  chamber_valid
+//   bit 1 (2):  heatsink_valid
+//   bit 2 (4):  relay_on
+//   bit 3 (8):  lid_open
+//   bit 4 (16): overtemp
+//   bit 5 (32): thermal_fault
 
 struct LogRecord {
-    unsigned long long timestampMs;
-    unsigned long millisBoot;
+    unsigned long timestampS;
     float chamberTemp;
     float humidity;
     float heatsinkTemp;
-    bool chamberValid;
-    bool heatsinkValid;
-    bool relayOn;
-    bool lidOpen;
+    uint8_t flags;
     float setpoint;
-    bool overtemp;
-    bool thermalFault;
-    char mode[10];
+    uint8_t modeInt;
 };
 
 static LogRecord buffer[BUFFER_SIZE];
@@ -39,12 +43,12 @@ static bool loggingActive = true;
 static bool fsReady = false;
 static int totalRecordCount = 0;  // persistent in-memory record count
 
-static unsigned long long getEpochMs(void) {
+static unsigned long getEpochS(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     // Before NTP sync, tv_sec is near 0 (epoch 1970)
     if (tv.tv_sec < 1000000000) return 0;
-    return (unsigned long long)tv.tv_sec * 1000ULL + tv.tv_usec / 1000ULL;
+    return (unsigned long)tv.tv_sec;
 }
 
 static bool diskHasSpace(void) {
@@ -65,7 +69,7 @@ static void writeBufferToFile(void) {
         f.print(CSV_HEADER);
     }
 
-    char line[160];
+    char line[64];
     for (int i = 0; i < bufferCount; i++) {
         LogRecord &r = buffer[i];
         char ct[8], hu[8], ht[8], sp[8];
@@ -74,17 +78,9 @@ static void writeBufferToFile(void) {
         snprintf(ht, sizeof(ht), "%.1f", (double)r.heatsinkTemp);
         snprintf(sp, sizeof(sp), "%.1f", (double)r.setpoint);
 
-        snprintf(line, sizeof(line), "%llu,%lu,%s,%s,%s,%d,%d,%d,%d,%s,%d,%d,%s\n",
-                 r.timestampMs, r.millisBoot,
-                 ct, hu, ht,
-                 r.chamberValid ? 1 : 0,
-                 r.heatsinkValid ? 1 : 0,
-                 r.relayOn ? 1 : 0,
-                 r.lidOpen ? 1 : 0,
-                 sp,
-                 r.overtemp ? 1 : 0,
-                 r.thermalFault ? 1 : 0,
-                 r.mode);
+        snprintf(line, sizeof(line), "%lu,%s,%s,%s,%u,%s,%u\n",
+                 r.timestampS, ct, hu, ht,
+                 (unsigned)r.flags, sp, (unsigned)r.modeInt);
         f.print(line);
     }
     f.close();
@@ -99,22 +95,30 @@ void datalog_init(void) {
     fsReady = true;
     Serial.println("LittleFS: mounted");
 
-    // Initialize record count from existing log file (one-time at boot)
+    // Check existing log for old-format header — if found, delete and start fresh
     File f = LittleFS.open(LOG_PATH, "r");
     if (f) {
-        int lines = 0;
-        int bytesRead = 0;
-        while (f.available()) {
-            if (f.read() == '\n') lines++;
-            // Reset WDT periodically during large file scan
-            if (++bytesRead % 1024 == 0) esp_task_wdt_reset();
+        char hdr[16] = {0};
+        f.readBytes(hdr, sizeof(OLD_HEADER_PREFIX) - 1);
+        if (strncmp(hdr, OLD_HEADER_PREFIX, sizeof(OLD_HEADER_PREFIX) - 1) == 0) {
+            f.close();
+            LittleFS.remove(LOG_PATH);
+            Serial.println("Datalog: old format detected, log cleared");
+        } else {
+            // New format — count records
+            f.seek(0);
+            int lines = 0;
+            int bytesScanned = 0;
+            while (f.available()) {
+                if (f.read() == '\n') lines++;
+                if (++bytesScanned % 1024 == 0) esp_task_wdt_reset();
+            }
+            totalRecordCount = (lines > 0) ? lines - 1 : 0;
+            size_t existingSize = f.size();
+            f.close();
+            Serial.printf("Datalog: %d existing records (%u bytes)\n",
+                           totalRecordCount, (unsigned)existingSize);
         }
-        // Subtract 1 for the CSV header line
-        totalRecordCount = (lines > 0) ? lines - 1 : 0;
-        size_t existingSize = f.size();
-        f.close();
-        Serial.printf("Datalog: %d existing records (%u bytes)\n",
-                       totalRecordCount, (unsigned)existingSize);
     }
 
     // NTP setup (non-blocking, syncs in background after WiFi connects)
@@ -125,7 +129,7 @@ void datalog_record(float chamberTemp, float humidity, float heatsinkTemp,
                     bool chamberValid, bool heatsinkValid,
                     bool relayOn, bool lidOpen,
                     float setpoint, bool overtemp,
-                    bool thermalFault, const char* mode) {
+                    bool thermalFault, int mode) {
     if (!loggingActive || !fsReady) return;
 
     if (!diskHasSpace()) {
@@ -151,22 +155,24 @@ void datalog_record(float chamberTemp, float humidity, float heatsinkTemp,
         writeBufferToFile();
     }
 
+    // Pack 6 booleans into a single flags bitmask (0-63)
+    uint8_t flags = 0;
+    if (chamberValid)  flags |= (1 << 0);
+    if (heatsinkValid) flags |= (1 << 1);
+    if (relayOn)       flags |= (1 << 2);
+    if (lidOpen)       flags |= (1 << 3);
+    if (overtemp)      flags |= (1 << 4);
+    if (thermalFault)  flags |= (1 << 5);
+
     LogRecord &r = buffer[bufferCount++];
     totalRecordCount++;
-    r.timestampMs   = getEpochMs();
-    r.millisBoot    = millis();
-    r.chamberTemp   = chamberTemp;
-    r.humidity       = humidity;
-    r.heatsinkTemp  = heatsinkTemp;
-    r.chamberValid  = chamberValid;
-    r.heatsinkValid = heatsinkValid;
-    r.relayOn       = relayOn;
-    r.lidOpen       = lidOpen;
-    r.setpoint      = setpoint;
-    r.overtemp      = overtemp;
-    r.thermalFault  = thermalFault;
-    strncpy(r.mode, mode, sizeof(r.mode) - 1);
-    r.mode[sizeof(r.mode) - 1] = '\0';
+    r.timestampS   = getEpochS();
+    r.chamberTemp  = chamberTemp;
+    r.humidity     = humidity;
+    r.heatsinkTemp = heatsinkTemp;
+    r.flags        = flags;
+    r.setpoint     = setpoint;
+    r.modeInt      = (uint8_t)mode;
 }
 
 void datalog_flush(void) {
