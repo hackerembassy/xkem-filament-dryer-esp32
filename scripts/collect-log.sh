@@ -3,15 +3,15 @@
 # collect-log.sh — Download the filament dryer CSV log, then clear it on the ESP.
 #
 # Usage:
-#   ./scripts/collect-log.sh                     # defaults: ESP at 10.13.13.93, logs in ~/dryer-logs/
-#   ./scripts/collect-log.sh 192.168.1.50        # custom ESP IP
+#   ./scripts/collect-log.sh                     # defaults: ESP at filament, logs in ~/dryer-logs/
+#   ./scripts/collect-log.sh 192.168.1.50        # custom ESP host/IP
 #   DRYER_LOG_DIR=/mnt/nas/logs ./scripts/collect-log.sh   # custom output dir
 #   SKIP_ANALYSIS=true ./scripts/collect-log.sh  # skip analysis step
 #
 
 set -euo pipefail
 
-ESP_IP="${1:-10.13.13.93}"
+ESP_HOST="${1:-filament}"
 LOG_DIR="${DRYER_LOG_DIR:-${HOME}/dryer-logs}"
 TIMEOUT=30
 
@@ -22,13 +22,13 @@ OUTFILE="${LOG_DIR}/dryer_${TIMESTAMP}.csv"
 mkdir --parents "${LOG_DIR}"
 
 # 1. Check if ESP is reachable
-if ! curl --silent --fail --max-time 5 "http://${ESP_IP}/api/log/stats" > /dev/null 2>&1; then
-    echo "ERROR: ESP at ${ESP_IP} is not reachable." >&2
+if ! curl --silent --fail --max-time 5 "http://${ESP_HOST}/api/log/stats" > /dev/null 2>&1; then
+    echo "ERROR: ESP at ${ESP_HOST} is not reachable." >&2
     exit 1
 fi
 
 # 2. Get log stats before download
-STATS="$(curl --silent --fail --max-time "${TIMEOUT}" "http://${ESP_IP}/api/log/stats")"
+STATS="$(curl --silent --fail --max-time "${TIMEOUT}" "http://${ESP_HOST}/api/log/stats")"
 RECORD_COUNT="$(echo "${STATS}" | grep --only-matching '"record_count":[0-9]*' | grep --only-matching '[0-9]*')"
 FILE_SIZE="$(echo "${STATS}" | grep --only-matching '"file_size":[0-9]*' | grep --only-matching '[0-9]*')"
 
@@ -40,7 +40,7 @@ fi
 echo "Found ${RECORD_COUNT} records (${FILE_SIZE} bytes) on ESP."
 
 # 3. Download the CSV log
-HTTP_CODE="$(curl --silent --output "${OUTFILE}" --write-out '%{http_code}' --max-time "${TIMEOUT}" "http://${ESP_IP}/api/log")"
+HTTP_CODE="$(curl --silent --output "${OUTFILE}" --write-out '%{http_code}' --max-time "${TIMEOUT}" "http://${ESP_HOST}/api/log")"
 
 if [ "${HTTP_CODE}" -ne 200 ]; then
     echo "ERROR: Download failed with HTTP ${HTTP_CODE}." >&2
@@ -59,7 +59,7 @@ if [ "${DOWNLOADED_LINES}" -lt 2 ]; then
 fi
 
 # 5. Clear the log on the ESP
-CLEAR_RESP="$(curl --silent --fail --max-time "${TIMEOUT}" --request DELETE "http://${ESP_IP}/api/log")"
+CLEAR_RESP="$(curl --silent --fail --max-time "${TIMEOUT}" --request DELETE "http://${ESP_HOST}/api/log")"
 if echo "${CLEAR_RESP}" | grep --quiet '"cleared":true'; then
     echo "ESP log cleared successfully."
 else
