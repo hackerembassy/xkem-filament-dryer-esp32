@@ -49,24 +49,25 @@ def detect_and_load(path):
 
     if "ts" in cols and "fl" in cols and "md" in cols:
         # New compact format: ts,ct,hu,ht,fl,sp,md
+        flags = df["fl"].values.astype(np.int64)
         out = pd.DataFrame()
         out["timestamp_s"] = df["ts"]
         out["chamber_temp"] = df["ct"]
         out["humidity"] = df["hu"]
         out["heatsink_temp"] = df["ht"]
-        out["chamber_valid"] = (df["fl"].astype(int) & 1).astype(bool)
-        out["heatsink_valid"] = ((df["fl"].astype(int) >> 1) & 1).astype(bool)
-        out["relay_on"] = ((df["fl"].astype(int) >> 2) & 1).astype(int)
-        out["lid_open"] = ((df["fl"].astype(int) >> 3) & 1).astype(bool)
-        out["overtemp"] = ((df["fl"].astype(int) >> 4) & 1).astype(bool)
-        out["thermal_fault"] = ((df["fl"].astype(int) >> 5) & 1).astype(bool)
+        out["chamber_valid"] = ((flags >> 0) & 1).astype(bool)
+        out["heatsink_valid"] = ((flags >> 1) & 1).astype(bool)
+        out["relay_on"] = ((flags >> 2) & 1).astype(int)
+        out["lid_open"] = ((flags >> 3) & 1).astype(bool)
+        out["overtemp"] = ((flags >> 4) & 1).astype(bool)
+        out["thermal_fault"] = ((flags >> 5) & 1).astype(bool)
         out["setpoint"] = df["sp"]
         out["mode_int"] = df["md"].astype(int)
         out["mode"] = out["mode_int"].map(MODE_NAMES).fillna("unknown")
         return out, "new"
 
     elif "timestamp_ms" in cols:
-        # Old 13-column format
+        # Old formats: 13-column (has mode/thermal_fault) or 12-column legacy (has enabled, no mode)
         out = pd.DataFrame()
         out["timestamp_s"] = (df["timestamp_ms"] / 1000).astype(int)
         out["chamber_temp"] = df["chamber_temp"]
@@ -77,11 +78,15 @@ def detect_and_load(path):
         out["relay_on"] = df["relay_on"].astype(int)
         out["lid_open"] = df["lid_open"].astype(bool)
         out["overtemp"] = df["overtemp"].astype(bool)
-        out["thermal_fault"] = df["thermal_fault"].astype(bool)
+        out["thermal_fault"] = df["thermal_fault"].astype(bool) if "thermal_fault" in cols else False
         out["setpoint"] = df["setpoint"]
-        out["mode"] = df["mode"].astype(str).str.strip()
+        if "mode" in cols:
+            out["mode"] = df["mode"].astype(str).str.strip()
+        else:
+            out["mode"] = "maintain"
         out["mode_int"] = out["mode"].map(MODE_NAMES_REV).fillna(-1).astype(int)
-        return out, "old"
+        fmt_label = "old-13col" if "mode" in cols else "old-12col"
+        return out, fmt_label
 
     else:
         print(f"ERROR: Unrecognized CSV format. Columns: {cols}", file=sys.stderr)
@@ -246,7 +251,8 @@ def plot_analysis(df, dominant, interval_s, fit_result, transitions, out_path):
     t = df["elapsed_h"].values
 
     fig, axes = plt.subplots(4, 1, figsize=(14, 16), sharex=True,
-                              gridspec_kw={"hspace": 0.08})
+                              gridspec_kw={"hspace": 0.08},
+                              layout="constrained")
     fig.suptitle(f"Filament Dryer Analysis \u2014 {dominant.upper()} @ {main_setpoint:.0f}\u00b0C "
                  f"({duration_h:.1f}h, {len(df)} samples)",
                  fontsize=16, fontweight="bold", y=0.98)
@@ -379,7 +385,7 @@ def plot_analysis(df, dominant, interval_s, fit_result, transitions, out_path):
     for ax in axes:
         ax.set_xlim(-0.05, x_max)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.set_constrained_layout_pads(hspace=0.02)
     plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"\nPlot saved to {out_path}")
@@ -401,7 +407,15 @@ def main():
 
     # Load and normalize
     df, fmt = detect_and_load(csv_path)
-    print(f"Loaded {len(df)} records from {csv_path} ({fmt} format)")
+    total_loaded = len(df)
+
+    # Drop records with timestamp=0 (logged before NTP sync)
+    pre_ntp = (df["timestamp_s"] == 0).sum()
+    if pre_ntp > 0:
+        df = df[df["timestamp_s"] > 0].reset_index(drop=True)
+
+    print(f"Loaded {total_loaded} records from {csv_path} ({fmt} format)"
+          + (f", dropped {pre_ntp} pre-NTP" if pre_ntp > 0 else ""))
 
     if len(df) < 2:
         print("ERROR: Not enough data to analyze (need at least 2 records)", file=sys.stderr)
